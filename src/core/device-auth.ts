@@ -7,9 +7,9 @@
 //   4. Device stores deviceToken → uses for all subsequent requests
 //
 // Pair tokens are stored in-memory only (no persistence).
-// Device tokens are persisted to ~/.cli-mobile/devices.json.
+// Device token hashes are persisted to ~/.cli-mobile/devices.json.
 
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir, networkInterfaces } from 'node:os';
 import { join } from 'node:path';
@@ -19,9 +19,13 @@ import { join } from 'node:path';
 export interface PairedDevice {
   id: string;
   name: string;
-  token: string; // 64-char hex
+  tokenHash: string; // sha256 hex digest of the device token
   createdAt: number;
   lastSeen: number;
+}
+
+export interface CreatedDevice extends PairedDevice {
+  token: string; // raw token returned once during pairing; never persisted
 }
 
 interface PairEntry {
@@ -126,6 +130,10 @@ function randomDeviceToken(): string {
   return randomBytes(DEVICE_TOKEN_BYTES).toString('hex');
 }
 
+function hashDeviceToken(token: string): string {
+  return createHash('sha256').update(token, 'utf8').digest('hex');
+}
+
 function randomDeviceId(): string {
   return randomBytes(8).toString('hex'); // 16-char
 }
@@ -133,10 +141,26 @@ function randomDeviceId(): string {
 async function readDeviceStore(): Promise<DeviceStore> {
   try {
     const text = await readFile(DEVICES_PATH, 'utf8');
-    return JSON.parse(text) as DeviceStore;
+    const parsed = JSON.parse(text) as { devices?: unknown };
+    if (!Array.isArray(parsed.devices)) return { devices: [] };
+    return {
+      devices: parsed.devices.filter(isPairedDevice),
+    };
   } catch {
     return { devices: [] };
   }
+}
+
+function isPairedDevice(value: unknown): value is PairedDevice {
+  if (!value || typeof value !== 'object') return false;
+  const device = value as Partial<PairedDevice>;
+  return (
+    typeof device.id === 'string' &&
+    typeof device.name === 'string' &&
+    typeof device.tokenHash === 'string' &&
+    typeof device.createdAt === 'number' &&
+    typeof device.lastSeen === 'number'
+  );
 }
 
 async function writeDeviceStore(store: DeviceStore): Promise<void> {
@@ -147,18 +171,19 @@ async function writeDeviceStore(store: DeviceStore): Promise<void> {
 /**
  * Create a new paired device. Returns the device record with its permanent token.
  */
-export async function createDevice(name: string): Promise<PairedDevice> {
+export async function createDevice(name: string): Promise<CreatedDevice> {
   const store = await readDeviceStore();
+  const token = randomDeviceToken();
   const device: PairedDevice = {
     id: randomDeviceId(),
     name: name || 'Unknown Device',
-    token: randomDeviceToken(),
+    tokenHash: hashDeviceToken(token),
     createdAt: Date.now(),
     lastSeen: Date.now(),
   };
   store.devices.push(device);
   await writeDeviceStore(store);
-  return device;
+  return { ...device, token };
 }
 
 /**
@@ -168,10 +193,11 @@ export async function createDevice(name: string): Promise<PairedDevice> {
 export async function validateDevice(token: string): Promise<PairedDevice | null> {
   if (!token || token.length < 32) return null;
   const store = await readDeviceStore();
-  const tokenBuf = Buffer.from(token);
+  const tokenHash = hashDeviceToken(token);
+  const tokenBuf = Buffer.from(tokenHash, 'hex');
 
   for (const device of store.devices) {
-    const deviceBuf = Buffer.from(device.token);
+    const deviceBuf = Buffer.from(device.tokenHash, 'hex');
     if (deviceBuf.length !== tokenBuf.length) continue;
     if (timingSafeEqual(tokenBuf, deviceBuf)) {
       // Update lastSeen

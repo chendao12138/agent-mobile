@@ -21,6 +21,8 @@ import {
 } from '../core/device-auth';
 
 const require = createRequire(import.meta.url);
+const packageJson = require('../../package.json') as { version?: string };
+const APP_VERSION = packageJson.version ?? '0.0.0';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..', '..');
@@ -140,7 +142,7 @@ async function main(): Promise<void> {
   setupWebSocket(wss, agent);
 
   httpServer.listen(PORT, () => {
-    console.log(`\n🧠  CLI Mobile v0.3.0\n`);
+    console.log(`\n🧠  CLI Mobile v${APP_VERSION}\n`);
     printBanner(pairToken);
     startRepl(currentPairToken);
   });

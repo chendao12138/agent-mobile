@@ -1,123 +1,138 @@
 # CLI Mobile
 
-Mobile remote control for Claude Code CLI.
+CLI Mobile 是一个面向手机浏览器的 Claude Code CLI 远程控制面板。它会在电脑上启动一个本地 Web 服务，让已配对的手机查看 Claude Code 工作区、打开会话、发送提示词、接收流式回复、管理会话，并上传支持的附件作为上下文。
 
-CLI Mobile runs a local web server on your computer and lets a paired phone browse Claude Code workspaces, inspect sessions, send prompts, stream responses, manage sessions, and upload supported attachments from a mobile browser.
+这个项目适合在同一局域网内使用；如果要暴露到公网，请先阅读本文的安全说明。
 
-## Features
+## 功能
 
-- Mobile-first React interface for Claude Code sessions
-- Local Express and WebSocket server
-- One-time pairing code with persistent device tokens
-- Workspace and session discovery from `~/.claude`
-- Session history, rename, archive, restore, pin, and branch actions
-- Attachment upload support for PDF, Word, PowerPoint, images, video, and text files
-- LAN access by default, with optional frp or P2P virtual LAN deployment
-- Terminal commands for listing devices, revoking devices, and generating new pairing codes
+- 移动端优先的 React 界面
+- 本地 Express API 和 WebSocket 服务
+- 一次性配对码和持久设备 token
+- 从 `~/.claude` 读取 Claude Code 工作区和会话
+- 会话历史查看、重命名、归档、恢复、置顶和分支
+- 支持 PDF、Word、PowerPoint、图片、视频和文本附件
+- 通过 WebSocket 流式接收 Claude Code 输出
+- 服务端终端命令：查看设备、移除设备、生成新配对码、退出服务
 
-## Requirements
+## 要求
 
-- Node.js 20 or newer
+- Node.js 20 或更新版本
 - npm
-- Claude Code CLI available on `PATH` as `claude`
+- 已安装 Claude Code CLI，并且 `claude` 命令在 `PATH` 中可用
 
-## Install
+## 安装
 
 ```bash
 npm install
 ```
 
-## Development
+## 开发运行
 
-Start the backend server:
+启动后端服务：
 
 ```bash
 npm run dev
 ```
 
-Start the Vite frontend dev server:
+另开一个终端启动前端开发服务：
 
 ```bash
 npm run dev:ui
 ```
 
-## Production
+开发模式下，后端默认监听 `0.0.0.0:3009`，前端由 Vite 提供开发服务。
 
-Build the mobile UI and start the server:
+## 生产运行
+
+先构建移动端页面：
 
 ```bash
 npm run build
+```
+
+再启动服务：
+
+```bash
 npm start
 ```
 
-By default the server listens on `0.0.0.0:3009`. Set `PORT` to use a different port:
+默认端口是 `3009`。可以通过 `PORT` 修改：
 
 ```bash
 PORT=3010 npm start
 ```
 
-If the app is exposed through a public URL, set `CLI_MOBILE_PUBLIC_URL` so the terminal QR code points at the public address:
+如果服务通过公网地址访问，可以设置 `CLI_MOBILE_PUBLIC_URL`，这样终端里打印的二维码会使用公网地址：
 
 ```bash
 CLI_MOBILE_PUBLIC_URL="https://cli.example.com" npm start
 ```
 
-## Pair A Phone
+## 手机配对
 
-When the server starts, the terminal prints a QR code and a 6-character pairing code.
+服务启动后，终端会打印二维码和 6 位配对码。
 
-1. Connect the phone to the same network as the computer.
-2. Open `http://<computer-lan-ip>:3009` in the phone browser, or scan the QR code.
-3. Enter the pairing code if prompted.
-4. After pairing, the phone stores a device token locally and can reconnect without a new code.
+1. 让手机和电脑处在同一网络，或通过你配置的安全隧道访问电脑。
+2. 在手机浏览器打开终端显示的地址，或扫描二维码。
+3. 输入配对码完成绑定。
+4. 配对成功后，设备 token 会保存在手机浏览器本地，后续可以直接连接。
 
-Pairing codes are short-lived and single-use. Restart the service or run `pair` in the terminal prompt to generate a new one.
+配对码默认 30 分钟有效，并且只能使用一次。服务运行时可以在终端输入 `pair` 生成新的配对码。
 
-## Terminal Commands
+## 服务端终端命令
 
-While the server is running, the `cli-mobile>` prompt accepts:
+服务启动后，终端会出现 `cli-mobile>` 提示符：
 
 ```text
-devices, ls           List paired devices
-revoke <id>, rm <id>  Revoke a paired device
-pair, newpair         Generate a new pairing code
-help, ?               Show help
-exit, quit, q         Stop the server
+devices, ls           列出已配对设备
+revoke <id>, rm <id>  移除设备
+pair, newpair         生成新的配对码
+help, ?               显示帮助
+exit, quit, q         停止服务
 ```
 
-## Remote Access
-
-CLI Mobile can be used over:
-
-- LAN: open `http://<computer-lan-ip>:3009`
-- frp: expose the local server through a VPS and HTTPS reverse proxy
-- P2P virtual LAN: connect the computer and phone to the same private overlay network
-
-See [config/REMOTE.md](config/REMOTE.md) for deployment examples and security notes.
-
-## Scripts
+## 脚本
 
 ```bash
-npm run dev        # Start the server in development mode
-npm run dev:ui     # Start the Vite frontend dev server
-npm run build      # Build the mobile UI
-npm start          # Start the production server
-npm run typecheck  # Run TypeScript checks
+npm run dev        # 启动开发后端
+npm run dev:ui     # 启动 Vite 前端开发服务
+npm run build      # 构建移动端页面
+npm start          # 启动生产服务
+npm run typecheck  # 运行 TypeScript 类型检查
 ```
 
-## Local Data
+## 本地数据
 
-Runtime data is stored outside the repository under `~/.cli-mobile`, including the cached workspace tree, paired devices, and uploaded attachments.
+CLI Mobile 的运行数据不会写入仓库，默认保存在用户目录：
 
-Claude Code session data is read from `~/.claude`.
+- `~/.cli-mobile/tree.json`：缓存的工作区和会话树
+- `~/.cli-mobile/devices.json`：已配对设备列表和设备 token hash
+- `~/.cli-mobile/attachments`：上传的附件文件
 
-## Security Notes
+Claude Code 的会话数据从 `~/.claude` 读取。
 
-- Do not expose the server publicly without HTTPS and an additional network boundary such as frp/Nginx authentication, firewall rules, or a private tunnel.
-- Revoke devices you no longer use with `revoke <id>`.
-- Use strong frp tokens and keep example config files free of real secrets.
-- Uploaded attachments are stored locally and cleaned up after their retention window.
+附件默认限制：
 
-## License
+- 单个附件最大 20MB
+- 单个会话附件总量最大 100MB
+- 附件保留 7 天后清理
+
+## 安全说明
+
+- 建议优先在局域网内使用。
+- 不要在没有 HTTPS、访问控制、防火墙或私有隧道保护的情况下直接暴露到公网。
+- 手机浏览器保存的设备 token 是长期凭据；服务端 `~/.cli-mobile/devices.json` 只保存 token hash。
+- 如果手机丢失或不再使用，请在服务端终端执行 `revoke <id>` 移除设备。
+- WebSocket 连接会在 URL query 中携带设备 token；公网部署时请避免在反向代理中记录完整 URL。
+- 上传附件会以本机文件路径传给 Claude Code，请确认附件内容适合被当前会话读取。
+
+## 当前限制
+
+- 项目目前没有自动化测试脚本。
+- multipart 附件解析由项目内部实现，适合当前轻量场景；更复杂的上传需求建议改用成熟解析库。
+- 服务启动逻辑会尝试清理占用端口的进程，生产环境使用前建议先确认这一行为符合你的预期。
+
+## 许可证
 
 MIT
