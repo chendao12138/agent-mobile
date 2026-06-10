@@ -1,0 +1,19 @@
+# frp 客户端配置（部署在你的 Mac 上）
+# frp 项目: https://github.com/fatedier/frp
+
+serverAddr = "your-vps-ip-or-domain.com"
+serverPort = 7000
+
+# 与服务端 auth.token 一致
+auth.token = "CHANGE_ME_TO_RANDOM_STRING_64_CHARS"
+
+# CLI Mobile 代理
+[[proxies]]
+name = "cli-mobile-http"
+type = "http"
+localPort = 3009
+# 替换为你的域名
+customDomains = ["claude.your-domain.com"]
+
+# WebSocket 代理（路径 /ws）
+# frp 的 http 类型自动处理 WebSocket Upgrade！

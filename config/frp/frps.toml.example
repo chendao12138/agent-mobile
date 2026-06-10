@@ -1,0 +1,21 @@
+# frp 服务端配置（部署在你的公网 VPS 上）
+# frp 项目: https://github.com/fatedier/frp
+
+bindPort = 7000
+
+# Web 服务端口（HTTPS，配合 Nginx 反代）
+vhostHTTPSPort = 8443
+
+# 认证 token — 请改成你自己的随机字符串
+auth.token = "CHANGE_ME_TO_RANDOM_STRING_64_CHARS"
+
+# 日志
+log.to = "/var/log/frps.log"
+log.level = "info"
+log.maxDays = 7
+
+# Dashboard（可选）
+webServer.addr = "127.0.0.1"
+webServer.port = 7500
+webServer.user = "admin"
+webServer.password = "CHANGE_ME"
