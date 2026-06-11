@@ -8,7 +8,7 @@
 cd cli-mobile
 npm install
 npm run build    # 构建前端
-npm start        # 生产模式启动，监听 0.0.0.0:3009
+npm start        # 生产模式启动；首次启动会询问是否配置 STCP 远程访问
 ```
 
 启动后终端会显示 6 位配对码和二维码，首次连接的手机需要输入配对码。
@@ -28,12 +28,12 @@ npm start        # 生产模式启动，监听 0.0.0.0:3009
 
 ---
 
-## 模式二：frp 内网穿透
+## 模式二：frp STCP 内网穿透
 
 ### 架构
 
 ```
-手机 ──HTTPS──► VPS (frps + Nginx) ──frp隧道──► Mac (frpc) ──► localhost:3009
+iOS Burrow/visitor ──STCP──► VPS (frps) ──frp隧道──► Mac (frpc) ──► cli-mobile
 ```
 
 ### 步骤
@@ -41,8 +41,8 @@ npm start        # 生产模式启动，监听 0.0.0.0:3009
 #### 1. VPS 端部署 frps
 
 ```bash
-# 下载 frp: https://github.com/fatedier/frp/releases
-wget https://github.com/fatedier/frp/releases/download/v0.61.0/frp_0.61.0_linux_amd64.tar.gz
+# 在 https://github.com/fatedier/frp/releases 下载适合 VPS 的 linux 包
+# 例如 frp_<version>_linux_amd64.tar.gz
 tar xzf frp_*.tar.gz
 cd frp_*
 
@@ -53,45 +53,50 @@ cd frp_*
 ./frps -c frps.toml
 ```
 
-#### 2. Mac 端部署 frpc
+#### 2. Mac 端首次启动向导
 
 ```bash
-# 同样下载 frp
-# 编辑 frpc.toml，使用 config/frp/frpc.toml.example 作为模板
-# 修改 serverAddr 和 auth.token
-
-./frpc -c frpc.toml
+npm start
 ```
 
-#### 3. VPS 端配置 Nginx
-
-```bash
-# 复制 config/nginx/cli-mobile.conf.example 到
-# /etc/nginx/sites-available/cli-mobile
-# 修改域名和证书路径
-
-# 获取 Let's Encrypt 证书
-certbot certonly --nginx -d claude.your-domain.com
-
-# 启用站点
-ln -s /etc/nginx/sites-available/cli-mobile /etc/nginx/sites-enabled/
-nginx -t && nginx -s reload
-```
-
-#### 4. 设置公网 URL 环境变量
-
-```bash
-# 启动 cli-mobile 时设置公网 URL，方便二维码显示
-CLI_MOBILE_PUBLIC_URL="https://cli.your-domain.com" npm start
-```
-
-#### 5. 手机访问
+首次启动如果选择启用 STCP，程序会询问：
 
 ```
-浏览器打开 https://cli.your-domain.com
-→ 输入配对码
-→ 开始使用
+frps 公网 IP 或域名
+frps serverPort/bindPort
+frps auth token
+frpc 程序路径（留空则自动下载安装到 ~/.cli-mobile/bin/frpc）
 ```
+
+程序会自动生成：
+
+```
+~/.cli-mobile/remote/remote.json
+~/.cli-mobile/remote/cli-remote-frpc.toml
+```
+
+并把两个文件权限设为 `0600`。如果未提供 `frpc` 路径，程序会从 GitHub latest release 下载适合当前平台的 `frpc` 到：
+
+```
+~/.cli-mobile/bin/frpc
+```
+
+配置完成后终端会展示一次 Burrow/visitor 端需要复制的信息：
+
+```
+serverAddr
+serverPort
+proxyName = cli-mobile-stcp
+secretKey
+```
+
+#### 3. 重新配置
+
+```
+cli-mobile> remote reset
+```
+
+`remote reset` 会继续使用当前 cli-mobile 服务端口，并重新生成 frpc 配置和 `secretKey`。
 
 ---
 
