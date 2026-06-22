@@ -1,6 +1,7 @@
 import { Router } from 'express';
-import type { Response } from 'express';
+import type { Response, NextFunction, Request } from 'express';
 import type { AgentAdapter } from '../agent/types';
+import multer from 'multer';
 import { readTree, updateSessionName, refreshTree } from '../core/claude-data';
 import { findSessionFile, readHistoryFromPath } from '../core/session-history';
 import {
@@ -8,7 +9,9 @@ import {
   deleteAttachment,
   handleAttachmentUpload,
   listAttachments,
+  upload,
 } from '../core/attachments';
+import { uploadConcurrency, uploadTimeout } from './upload-guard';
 import {
   generatePairToken,
   validatePairToken,
@@ -23,6 +26,29 @@ function requireParam(param: string | undefined, res: Response): string | null {
     return null;
   }
   return param;
+}
+
+/**
+ * Multer single-file middleware wrapper.
+ * Catches MulterError (e.g. file-size exceeded) and converts it to
+ * an AttachmentError-format response so the handler never sees bad input.
+ */
+function multerSingle(req: Request, res: Response, next: NextFunction): void {
+  upload.single('file')(req, res, (err: unknown) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        sendAttachmentError(res, new AttachmentError(413, '单个附件不能超过 20MB'));
+        return;
+      }
+      sendAttachmentError(res, new AttachmentError(400, err.message));
+      return;
+    }
+    if (err) {
+      sendAttachmentError(res, err instanceof Error ? err : new AttachmentError(500, String(err)));
+      return;
+    }
+    next();
+  });
 }
 
 export function createApiRouter(agent?: AgentAdapter): Router {
@@ -226,9 +252,15 @@ export function createApiRouter(agent?: AgentAdapter): Router {
 
   // ── Attachments ──
 
-  r.post('/attachments', async (req, res) => {
+  r.post('/attachments', uploadTimeout(), uploadConcurrency(), multerSingle, async (req: Request, res) => {
     try {
-      const attachment = await handleAttachmentUpload(req);
+      const file = req.file;
+      if (!file) {
+        res.status(400).json({ ok: false, error: '缺少附件文件' });
+        return;
+      }
+      const fields = req.body as Record<string, string>;
+      const attachment = await handleAttachmentUpload(file, fields);
       res.json({ ok: true, attachment: publicAttachment(attachment) });
     } catch (err) {
       sendAttachmentError(res, err);

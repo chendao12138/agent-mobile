@@ -10,6 +10,7 @@ import { Readable } from 'node:stream';
 export interface RemoteConfig {
   setupCompleted: boolean;
   enabled: boolean;
+  frpcAutoStart?: boolean;
   mode: 'stcp';
   localPort: number;
   serverAddr: string;
@@ -131,10 +132,17 @@ export async function readRemoteState(): Promise<RemoteState | null> {
   }
 }
 
+export async function setFrpcAutoStart(config: RemoteConfig, frpcAutoStart: boolean): Promise<RemoteConfig> {
+  const next: RemoteConfig = { ...config, frpcAutoStart };
+  await writeRemoteState(next);
+  return next;
+}
+
 export function remoteSummary(config: RemoteConfig | null): string[] {
   if (!config) return ['远程 STCP: 未启用'];
   return [
     '远程 STCP: 已启用',
+    `frpc 自动启动: ${config.frpcAutoStart === false ? '否' : '是'}`,
     `frps: ${config.serverAddr}:${config.serverPort}`,
     `proxy name: ${config.proxyName}`,
     `local: 127.0.0.1:${config.localPort}`,
@@ -189,6 +197,7 @@ async function runRemoteWizard(
   return {
     setupCompleted: true,
     enabled: true,
+    frpcAutoStart: true,
     mode: 'stcp',
     localPort,
     serverAddr,

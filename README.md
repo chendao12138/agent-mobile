@@ -95,11 +95,13 @@ exit, quit, q         停止服务
 ## 脚本
 
 ```bash
-npm run dev        # 启动开发后端
-npm run dev:ui     # 启动 Vite 前端开发服务
-npm run build      # 构建移动端页面
-npm start          # 启动生产服务
-npm run typecheck  # 运行 TypeScript 类型检查
+npm run dev         # 启动开发后端
+npm run dev:ui      # 启动 Vite 前端开发服务
+npm run build       # 构建移动端页面
+npm start           # 启动生产服务
+npm run typecheck   # 运行 TypeScript 类型检查
+npm test            # 运行全部测试
+npm run test:watch  # 监听模式运行测试
 ```
 
 ## 本地数据
@@ -129,8 +131,6 @@ Claude Code 的会话数据从 `~/.claude` 读取。
 
 ## 当前限制
 
-- 项目目前没有自动化测试脚本。
-- multipart 附件解析由项目内部实现，适合当前轻量场景；更复杂的上传需求建议改用成熟解析库。
 - 服务启动逻辑会尝试清理占用端口的进程，生产环境使用前建议先确认这一行为符合你的预期。
 
 ## 许可证

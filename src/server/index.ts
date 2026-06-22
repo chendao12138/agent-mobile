@@ -14,6 +14,7 @@ import {
   ensureRemoteSetup,
   remoteSummary,
   resetRemoteSetup,
+  setFrpcAutoStart,
   startFrpc,
   type FrpcHandle,
   type RemoteConfig,
@@ -115,7 +116,7 @@ async function main(): Promise<void> {
   let activeRemoteConfig = startupRemote.config;
   const port = activeRemoteConfig?.localPort ?? defaultPort;
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: '1mb' }));
 
   // ── Build + persist workspace/session tree from ~/.claude/ ──
   console.log('Scanning ~/.claude/ …');
@@ -147,6 +148,12 @@ async function main(): Promise<void> {
 
   // ── HTTP + WS ──
   const httpServer = createServer(app);
+
+  // Harden against slow clients: cap total request lifetime at 2 min
+  // and header completion at 30 s (Node.js defaults: 0 = unlimited).
+  httpServer.requestTimeout = 120_000;
+  httpServer.headersTimeout = 30_000;
+
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
   setupWebSocket(wss, agent);
 
@@ -158,7 +165,7 @@ async function main(): Promise<void> {
 
   async function onListening(): Promise<void> {
     console.log(`\n🧠  CLI Mobile v${APP_VERSION}\n`);
-    if (activeRemoteConfig) {
+    if (activeRemoteConfig && activeRemoteConfig.frpcAutoStart !== false) {
       frpcHandle = startFrpc(activeRemoteConfig);
       if (frpcHandle) {
         const status = await frpcHandle.waitForStartup();
@@ -166,8 +173,10 @@ async function main(): Promise<void> {
       } else {
         console.log('⚠️  frpc 启动失败');
       }
+    } else if (activeRemoteConfig) {
+      console.log('STCP 已配置，frpc 未自动启动。输入 remote start 可启动。');
     }
-    printBanner(pairToken, port, activeRemoteConfig);
+    printBanner(pairToken, port, frpcHandle?.isRunning() ? activeRemoteConfig : null);
     startRepl(currentPairToken, port);
   }
 
@@ -243,11 +252,46 @@ async function main(): Promise<void> {
           case 'pair':
           case 'newpair': {
             currentPairToken = generatePairToken();
-            printBanner(currentPairToken, currentPort, activeRemoteConfig);
+            printBanner(currentPairToken, currentPort, frpcHandle?.isRunning() ? activeRemoteConfig : null);
             break;
           }
 
           case 'remote': {
+            if (sub === 'start') {
+              if (!activeRemoteConfig) {
+                console.log('  STCP 未配置。请先运行 remote reset。');
+                break;
+              }
+              if (frpcHandle?.isRunning()) {
+                activeRemoteConfig = await setFrpcAutoStart(activeRemoteConfig, true);
+                console.log('  frpc 已在运行，并已设置为下次自动启动。');
+                break;
+              }
+              activeRemoteConfig = await setFrpcAutoStart(activeRemoteConfig, true);
+              frpcHandle = startFrpc(activeRemoteConfig);
+              if (frpcHandle) {
+                const status = await frpcHandle.waitForStartup();
+                console.log(status.ok ? `  ✓ ${status.message}` : `  ⚠️  ${status.message}`);
+              } else {
+                console.log('  ⚠️  frpc 启动失败');
+              }
+              break;
+            }
+
+            if (sub === 'stop') {
+              if (!activeRemoteConfig) {
+                console.log('  STCP 未配置。');
+                break;
+              }
+              if (frpcHandle) {
+                await frpcHandle.stop();
+                frpcHandle = null;
+              }
+              activeRemoteConfig = await setFrpcAutoStart(activeRemoteConfig, false);
+              console.log('  frpc 已停止，并已设置为下次不自动启动。');
+              break;
+            }
+
             if (sub === 'reset') {
               if (frpcHandle) {
                 await frpcHandle.stop();
@@ -279,7 +323,7 @@ async function main(): Promise<void> {
               break;
             }
 
-            console.log('  用法: remote [status|reset]');
+            console.log('  用法: remote [status|start|stop|reset]');
             break;
           }
 
@@ -291,6 +335,8 @@ async function main(): Promise<void> {
             console.log('  revoke <id>, rm <id>  移除设备');
             console.log('  pair, newpair         生成新配对码');
             console.log('  remote status         查看 STCP/frpc 状态');
+            console.log('  remote start          启动 frpc，并记住下次自动启动');
+            console.log('  remote stop           停止 frpc，并记住下次不自动启动');
             console.log('  remote reset          重新配置 STCP/frpc');
             console.log('  help, ?               显示帮助');
             console.log('  exit, quit, q         退出');

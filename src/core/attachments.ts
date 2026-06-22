@@ -1,9 +1,9 @@
-import type { IncomingMessage } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, extname, join } from 'node:path';
+import multer from 'multer';
 import { readTree } from './claude-data';
 
 export type AttachmentCategory = 'pdf' | 'word' | 'ppt' | 'image' | 'video' | 'txt';
@@ -20,15 +20,6 @@ export interface AttachmentRecord {
   createdAt: number;
 }
 
-interface ParsedUpload {
-  fields: Record<string, string>;
-  file: {
-    filename: string;
-    mimeType: string;
-    data: Buffer;
-  };
-}
-
 export const MAX_ATTACHMENT_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_SESSION_ATTACHMENT_BYTES = 100 * 1024 * 1024;
 
@@ -36,9 +27,18 @@ const ATTACHMENTS_DIR = join(homedir(), '.cli-mobile', 'attachments');
 const MANIFEST_FILE = 'manifest.json';
 const CLEANUP_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
-const MULTIPART_OVERHEAD_BYTES = 512 * 1024;
 
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Multer instance configured for memory storage.
+ * File-size enforcement is handled by multer's limits;
+ * the handler still double-checks and validates the session quota.
+ */
+export const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_ATTACHMENT_FILE_BYTES },
+});
 
 export function startAttachmentCleanup(): void {
   if (cleanupTimer) return;
@@ -49,10 +49,12 @@ export function startAttachmentCleanup(): void {
   cleanupTimer.unref();
 }
 
-export async function handleAttachmentUpload(req: IncomingMessage): Promise<AttachmentRecord> {
-  const upload = await parseMultipartUpload(req);
-  const workspace = upload.fields.workspace;
-  const sessionId = upload.fields.sessionId;
+export async function handleAttachmentUpload(
+  file: Express.Multer.File,
+  fields: Record<string, string>,
+): Promise<AttachmentRecord> {
+  const workspace = fields.workspace;
+  const sessionId = fields.sessionId;
 
   if (!workspace || !sessionId || sessionId === 'new') {
     throw new AttachmentError(400, '附件只能上传到已有会话');
@@ -60,11 +62,11 @@ export async function handleAttachmentUpload(req: IncomingMessage): Promise<Atta
 
   await ensureSessionInWorkspace(workspace, sessionId);
 
-  if (upload.file.data.length > MAX_ATTACHMENT_FILE_BYTES) {
+  if (file.size > MAX_ATTACHMENT_FILE_BYTES) {
     throw new AttachmentError(413, '单个附件不能超过 20MB');
   }
 
-  const category = detectCategory(upload.file.filename, upload.file.mimeType);
+  const category = detectCategory(file.originalname, file.mimetype);
   if (!category) {
     throw new AttachmentError(415, '仅支持 pdf/word/ppt/image/video/txt 附件');
   }
@@ -74,17 +76,17 @@ export async function handleAttachmentUpload(req: IncomingMessage): Promise<Atta
 
   const records = await readManifest(sessionId);
   const usedBytes = await totalAttachmentBytes(sessionId, records);
-  if (usedBytes + upload.file.data.length > MAX_SESSION_ATTACHMENT_BYTES) {
+  if (usedBytes + file.size > MAX_SESSION_ATTACHMENT_BYTES) {
     throw new AttachmentError(413, '当前会话附件总大小不能超过 100MB');
   }
 
-  const originalName = basename(upload.file.filename || 'attachment');
+  const originalName = basename(file.originalname || 'attachment');
   const safeName = sanitizeFilename(originalName, category);
   const id = `att_${randomUUID()}`;
   const filename = `${id}-${safeName}`;
   const filePath = join(sessionDir, filename);
 
-  await writeFile(filePath, upload.file.data);
+  await writeFile(filePath, file.buffer);
 
   const record: AttachmentRecord = {
     id,
@@ -92,9 +94,9 @@ export async function handleAttachmentUpload(req: IncomingMessage): Promise<Atta
     originalName,
     filename,
     path: filePath,
-    mimeType: upload.file.mimeType || 'application/octet-stream',
+    mimeType: file.mimetype || 'application/octet-stream',
     category,
-    size: upload.file.data.length,
+    size: file.size,
     createdAt: Date.now(),
   };
 
@@ -173,94 +175,6 @@ async function ensureSessionInWorkspace(workspace: string, sessionId: string): P
   if (!session) {
     throw new AttachmentError(404, 'Session is not in this workspace');
   }
-}
-
-async function parseMultipartUpload(req: IncomingMessage): Promise<ParsedUpload> {
-  const contentType = req.headers['content-type'] ?? '';
-  const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
-  const boundary = boundaryMatch?.[1] ?? boundaryMatch?.[2];
-  if (!boundary) {
-    throw new AttachmentError(400, 'Expected multipart/form-data');
-  }
-
-  const declaredLength = Number(req.headers['content-length'] ?? 0);
-  if (declaredLength > MAX_ATTACHMENT_FILE_BYTES + MULTIPART_OVERHEAD_BYTES) {
-    throw new AttachmentError(413, '单个附件不能超过 20MB');
-  }
-
-  const chunks: Buffer[] = [];
-  let total = 0;
-  for await (const chunk of req) {
-    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    total += buf.length;
-    if (total > MAX_ATTACHMENT_FILE_BYTES + MULTIPART_OVERHEAD_BYTES) {
-      throw new AttachmentError(413, '单个附件不能超过 20MB');
-    }
-    chunks.push(buf);
-  }
-
-  const body = Buffer.concat(chunks);
-  const parts = splitBuffer(body, Buffer.from(`--${boundary}`));
-  const fields: Record<string, string> = {};
-  let file: ParsedUpload['file'] | null = null;
-
-  for (const rawPart of parts) {
-    let part = trimPart(rawPart);
-    if (part.length === 0 || part.equals(Buffer.from('--'))) continue;
-    if (part.subarray(0, 2).toString() === '--') continue;
-
-    const headerEnd = part.indexOf('\r\n\r\n');
-    if (headerEnd === -1) continue;
-
-    const headerText = part.subarray(0, headerEnd).toString('utf8');
-    let value = part.subarray(headerEnd + 4);
-    if (value.subarray(-2).toString() === '\r\n') {
-      value = value.subarray(0, -2);
-    }
-
-    const disposition = headerText.match(/content-disposition:\s*form-data;([^\r\n]+)/i)?.[1] ?? '';
-    const name = disposition.match(/name="([^"]+)"/i)?.[1];
-    const filename = disposition.match(/filename="([^"]*)"/i)?.[1];
-    const mimeType = headerText.match(/content-type:\s*([^\r\n]+)/i)?.[1]?.trim() ?? '';
-
-    if (!name) continue;
-
-    if (filename !== undefined) {
-      if (name === 'file' && value.length > 0) {
-        file = { filename, mimeType, data: value };
-      }
-    } else {
-      fields[name] = value.toString('utf8');
-    }
-  }
-
-  if (!file) {
-    throw new AttachmentError(400, '缺少附件文件');
-  }
-
-  return { fields, file };
-}
-
-function splitBuffer(buffer: Buffer, delimiter: Buffer): Buffer[] {
-  const parts: Buffer[] = [];
-  let start = 0;
-  let idx = buffer.indexOf(delimiter, start);
-
-  while (idx !== -1) {
-    parts.push(buffer.subarray(start, idx));
-    start = idx + delimiter.length;
-    idx = buffer.indexOf(delimiter, start);
-  }
-  parts.push(buffer.subarray(start));
-  return parts;
-}
-
-function trimPart(part: Buffer): Buffer {
-  let start = 0;
-  let end = part.length;
-  while (part.subarray(start, start + 2).toString() === '\r\n') start += 2;
-  while (part.subarray(end - 2, end).toString() === '\r\n') end -= 2;
-  return part.subarray(start, end);
 }
 
 function detectCategory(filename: string, mimeType: string): AttachmentCategory | null {

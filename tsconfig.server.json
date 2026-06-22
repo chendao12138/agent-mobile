@@ -17,5 +17,5 @@
     }
   },
   "include": ["src/**/*"],
-  "exclude": ["src/mobile/**/*", "node_modules", "dist"]
+  "exclude": ["src/mobile/**/*", "src/**/*.test.ts", "src/**/*.test.tsx", "node_modules", "dist"]
 }
