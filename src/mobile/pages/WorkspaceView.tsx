@@ -28,7 +28,11 @@ export default function WorkspaceView() {
   const navigate = useNavigate();
   const location = useLocation();
   const state = location.state as { sessionId?: string; workspaceName?: string; forkFrom?: string } | null;
-  const forkFrom = state?.forkFrom;
+
+  // forkFrom is consumed once — after the first prompt creates the new session,
+  // subsequent prompts must NOT re-fork, or they would keep branching instead
+  // of continuing the existing conversation.
+  const forkFromRef = useRef<string | undefined>(state?.forkFrom);
 
   const wsName = decodeURIComponent(wsNameParam ?? state?.workspaceName ?? '');
   const [sessionId, setSessionId] = useState(state?.sessionId ?? 'new');
@@ -122,10 +126,14 @@ export default function WorkspaceView() {
       const displayText = text || (attachmentIds.length > 0 ? '请查看并处理这些附件。' : '');
       setMessages((prev) => [...prev, { role: 'user', content: displayText, timestamp: new Date().toISOString() }]);
       setStreamState(null);
-      send({ type: 'prompt', text, workspace: wsName, sessionId, attachmentIds, mode, model, ...(forkFrom ? { forkFrom } : {}) });
+      // Consume forkFrom once — clear after first use so subsequent prompts
+      // continue the new session rather than forking again.
+      const currentForkFrom = forkFromRef.current;
+      if (currentForkFrom) forkFromRef.current = undefined;
+      send({ type: 'prompt', text, workspace: wsName, sessionId, attachmentIds, mode, model, ...(currentForkFrom ? { forkFrom: currentForkFrom } : {}) });
       setAttachments([]);
     }
-  }, [attachments, connected, send, wsName, sessionId, forkFrom, mode, model]);
+  }, [attachments, connected, send, wsName, sessionId, mode, model]);
 
   const handleStop = useCallback(() => { send({ type: 'stop', workspace: wsName, sessionId }); setIsRunning(false); }, [send, wsName, sessionId]);
   const sessionLabel = (s: SessionInfo) => s.name || s.id.slice(0, 8);
